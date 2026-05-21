@@ -33,7 +33,7 @@ data/
   vault_flows.csv                 nonFundingLedger flow events, same vaults+window
   funding.csv                     funding events, same vaults+window
   fills/
-    Liquidator_oct1_nov19.parquet         Raw fills for Liquidator
+    Liquidator_aug1_nov19.parquet         Raw fills for Liquidator (covers all control windows)
     Liquidator_2_oct1_nov19.parquet       Raw fills for Liquidator 2
     Strategy_A_daily_aggregate.csv        Daily closed_pnl sum (MM detail aggregated)
     Strategy_B_daily_aggregate.csv        Daily closed_pnl sum (MM detail aggregated)
@@ -69,7 +69,18 @@ requirements.txt
 | `fills/Liquidator*.parquet` | `s3://hl-mainnet-node-data/node_fills_by_block/`, address-filtered |
 | `fills/Strategy_*_daily_aggregate.csv` | Same S3 source, aggregated to per-day closed_pnl sums |
 
-Re-pull from source with `python scripts/pull_data.py` (requires AWS credentials with requester-pays access to the HL S3 bucket).
+Re-pull the HL API portion from source with `python scripts/pull_data.py`. The script writes fresh copies of `vault_pnl_snapshots.csv`, `vault_flows.csv`, and `funding.csv` to `data/from_api/` so they can be diffed against the bundled `data/*.csv`. The S3 fills portion requires AWS credentials with requester-pays access and is documented as a manual procedure at the bottom of `pull_data.py`.
+
+Verifying that bundled data matches what HL currently publishes:
+
+```bash
+python scripts/pull_data.py
+diff data/vault_pnl_snapshots.csv data/from_api/vault_pnl_snapshots.csv
+diff data/vault_flows.csv          data/from_api/vault_flows.csv
+diff data/funding.csv              data/from_api/funding.csv
+```
+
+The bundled CSV is filtered to the date windows relevant to the reconciliation; the API pull includes the full history. Inner-joining on `(ts, vault, scope)`, all 82 bundled `vault_pnl` rows tie to the API pull at $0.00 for `account_value` and `pnl_since_inception` and within $0.11 for `flow_cum` (derived as `account_value - pnl_since_inception`).
 
 ## The open question
 

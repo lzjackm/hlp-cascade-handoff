@@ -1,7 +1,10 @@
 """
 Control tests: prove the cascade gap is specific to (a) cascade event, (b) backstop liquidator role.
 
-Control 1: Liquidator across Oct 29 → Nov 19. Window covers the Nov 12 event where
+Control 1a: Liquidator across two quiet windows (Aug 20 → Sep 3 and Sep 17 → Oct 1).
+Same vault, no cascade activity, modest fill counts. Expected gap: under $3K.
+
+Control 1b: Liquidator across Oct 29 → Nov 19. Window covers the Nov 12 event where
 Liquidator independently lost approximately $5.5M from a liquidation. Same vault, same
 data path, same magnitude. Expected gap: under $1,500.
 
@@ -62,11 +65,22 @@ def reconcile(vault, t_start, t_end, fills_source=None, label=""):
 
 
 print("=" * 90)
-print("CONTROL 1: Liquidator, Oct 29 → Nov 19 (covers Nov 12 $5.5M event)")
+print("CONTROL 1a: Liquidator quiet windows (no cascade activity)")
+print("=" * 90)
+reconcile('Liquidator', pd.Timestamp('2025-08-20', tz='UTC'), pd.Timestamp('2025-09-03T23:59', tz='UTC'),
+          fills_source='Liquidator_aug1_nov19.parquet',
+          label='(Aug 20 → Sep 3 quiet window)')
+reconcile('Liquidator', pd.Timestamp('2025-09-17', tz='UTC'), pd.Timestamp('2025-10-01T23:59', tz='UTC'),
+          fills_source='Liquidator_aug1_nov19.parquet',
+          label='(Sep 17 → Oct 1 quiet window)')
+
+print()
+print("=" * 90)
+print("CONTROL 1b: Liquidator, Oct 29 → Nov 19 (covers Nov 12 $5.5M event)")
 print("=" * 90)
 reconcile('Liquidator', pd.Timestamp('2025-10-29', tz='UTC'), pd.Timestamp('2025-11-19', tz='UTC'),
-          fills_source='Liquidator_oct1_nov19.parquet',
-          label='(non-cascade control)')
+          fills_source='Liquidator_aug1_nov19.parquet',
+          label='(Nov 12 magnitude-control window)')
 
 print()
 print("=" * 90)
