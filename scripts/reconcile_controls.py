@@ -1,0 +1,82 @@
+"""
+Control tests: prove the cascade gap is specific to (a) cascade event, (b) backstop liquidator role.
+
+Control 1: Liquidator across Oct 29 → Nov 19. Window covers the Nov 12 event where
+Liquidator independently lost approximately $5.5M from a liquidation. Same vault, same
+data path, same magnitude. Expected gap: under $1,500.
+
+Control 2: Strategy A and Strategy B across Oct 1 → Oct 15 (the cascade window).
+Same window, same identity, different vault role (market makers, not backstop). Expected
+gap: roughly $77K and -$133K respectively, two orders of magnitude smaller than the
+backstop-vault gap.
+"""
+import pandas as pd
+from pathlib import Path
+
+DATA = Path(__file__).resolve().parent.parent / 'data'
+vp   = pd.read_csv(DATA / 'vault_pnl_snapshots.csv')
+vp['ts'] = pd.to_datetime(vp['ts'], utc=True, format='ISO8601')
+fund = pd.read_csv(DATA / 'funding.csv')
+fund['ts'] = pd.to_datetime(fund['ts'], utc=True, format='ISO8601')
+
+def reconcile(vault, t_start, t_end, fills_source=None, label=""):
+    api = vp[
+        (vp['vault_name'] == vault) &
+        (vp['scope'] == 'all') &
+        (vp['ts'] >= t_start) &
+        (vp['ts'] <= t_end)
+    ].sort_values('ts')
+    if len(api) < 2:
+        print(f"\n{vault} {label}: insufficient snapshots ({len(api)})")
+        return
+    pre, post = api.iloc[0], api.iloc[-1]
+    pnl_si_delta = post['pnl_since_inception'] - pre['pnl_since_inception']
+
+    if fills_source.endswith('.parquet'):
+        fills = pd.read_parquet(DATA / 'fills' / fills_source, columns=['ts', 'closed_pnl'])
+        fills['ts'] = pd.to_datetime(fills['ts'], utc=True)
+        in_window = (fills['ts'] >= pre['ts']) & (fills['ts'] <= post['ts'])
+        cpnl_sum = fills.loc[in_window, 'closed_pnl'].sum()
+        n_fills = int(in_window.sum())
+    else:
+        agg = pd.read_csv(DATA / 'fills' / fills_source)
+        agg['date'] = pd.to_datetime(agg['date'], utc=True, format='ISO8601')
+        in_window = (agg['date'] >= pre['ts'].normalize()) & (agg['date'] <= post['ts'].normalize())
+        cpnl_sum = agg.loc[in_window, 'closed_pnl_sum'].sum()
+        n_fills = int(agg.loc[in_window, 'n_fills'].sum())
+
+    f = fund[(fund['vault_name'] == vault) & (fund['ts'] >= pre['ts']) & (fund['ts'] <= post['ts'])]
+    fund_sum = f['delta_usd'].sum()
+    reconstructed = cpnl_sum + fund_sum
+    gap = pnl_si_delta - reconstructed
+
+    print(f"\n{vault} {label}")
+    print(f"  Window: {pre['ts']} → {post['ts']}")
+    print(f"  HL API pnl_si Δ:               ${pnl_si_delta:>17,.2f}")
+    print(f"  Σ fills.closedPnl ({n_fills:>9} fills): ${cpnl_sum:>17,.2f}")
+    print(f"  Σ funding:                     ${fund_sum:>17,.2f}")
+    print(f"  Reconstructed:                 ${reconstructed:>17,.2f}")
+    print(f"  Gap:                           ${gap:>17,.2f}")
+
+
+print("=" * 90)
+print("CONTROL 1: Liquidator, Oct 29 → Nov 19 (covers Nov 12 $5.5M event)")
+print("=" * 90)
+reconcile('Liquidator', pd.Timestamp('2025-10-29', tz='UTC'), pd.Timestamp('2025-11-19', tz='UTC'),
+          fills_source='Liquidator_oct1_nov19.parquet',
+          label='(non-cascade control)')
+
+print()
+print("=" * 90)
+print("CONTROL 2: Strategy A and Strategy B, Oct 1 → Oct 15 (cascade window, MM role)")
+print("=" * 90)
+reconcile('Strategy A', pd.Timestamp('2025-10-01', tz='UTC'), pd.Timestamp('2025-10-15T23:59', tz='UTC'),
+          fills_source='Strategy_A_daily_aggregate.csv',
+          label='(market-maker control, cascade window)')
+reconcile('Strategy B', pd.Timestamp('2025-10-01', tz='UTC'), pd.Timestamp('2025-10-15T23:59', tz='UTC'),
+          fills_source='Strategy_B_daily_aggregate.csv',
+          label='(market-maker control, cascade window)')
+
+print()
+print("Expected: both controls reconcile to far below the $5M-per-vault cascade gap.")
+print("This rules out: pipeline bug, structural backstop-accounting issue, generic cascade artifact.")

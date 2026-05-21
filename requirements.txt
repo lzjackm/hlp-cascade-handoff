@@ -1,0 +1,6 @@
+pandas>=2.0
+pyarrow>=14.0
+requests>=2.31
+# Optional, only needed by scripts/pull_data.py for re-pulling from source:
+# boto3>=1.34
+# lz4>=4.3
