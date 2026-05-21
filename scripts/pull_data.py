@@ -50,17 +50,86 @@ WIN_START_MS = int(pd.Timestamp('2025-08-01', tz='UTC').timestamp() * 1000)
 WIN_END_MS   = int(pd.Timestamp('2025-11-19T23:59', tz='UTC').timestamp() * 1000)
 
 
-def post_info(body: dict, retries: int = 3) -> object:
+REQUEST_INTERVAL_SECONDS = 0.4   # baseline throttle between HL API calls
+_last_request_ts = 0.0
+
+
+def post_info(body: dict, retries: int = 5) -> object:
+    global _last_request_ts
     last_exc = None
     for attempt in range(retries):
+        # Throttle to stay under HL's IP-level rate limit
+        elapsed = time.time() - _last_request_ts
+        if elapsed < REQUEST_INTERVAL_SECONDS:
+            time.sleep(REQUEST_INTERVAL_SECONDS - elapsed)
         try:
             r = requests.post(INFO_URL, json=body, timeout=30)
+            _last_request_ts = time.time()
+            if r.status_code == 429:
+                # Exponential backoff on rate limit
+                wait = 2.0 * (attempt + 1) ** 2
+                time.sleep(wait)
+                continue
             r.raise_for_status()
             return r.json()
         except (requests.HTTPError, requests.ConnectionError, requests.Timeout) as exc:
             last_exc = exc
             time.sleep(1.5 * (attempt + 1))
     raise RuntimeError(f"POST {INFO_URL} failed after {retries} attempts: {last_exc}")
+
+
+# HL's userFunding and userNonFundingLedgerUpdates endpoints cap results per
+# call (around 500 entries). With both startTime and endTime supplied, the
+# endpoint can also silently miss events in the requested range. The reliable
+# pattern is cursor-based pagination: pass only startTime, dedupe by
+# (time, coin) since funding events share a zero-placeholder hash, then advance
+# the cursor to max(time)+1 each page until the page comes back empty.
+
+
+def post_info_paginated(endpoint_type: str, user: str, start_ms: int, end_ms: int) -> list:
+    """Cursor-paginate a time-windowed HL info endpoint.
+
+    Pulls events forward from start_ms, advancing the cursor to max(time)+1
+    each page. Stops when the page is empty or the cursor passes end_ms.
+    Dedupes by `hash` when available; for events with a zero placeholder hash
+    (funding), dedupes by (time, delta.coin).
+    """
+    out = []
+    seen = set()
+    cursor = start_ms
+    while cursor <= end_ms:
+        d = post_info({
+            'type': endpoint_type,
+            'user': user,
+            'startTime': cursor,
+        })
+        if not isinstance(d, list) or not d:
+            break
+        added_any = False
+        max_ts = cursor
+        for e in d:
+            t = int(e.get('time', 0))
+            if t > max_ts:
+                max_ts = t
+            if t > end_ms:
+                continue   # past the window, skip
+            h = e.get('hash', '')
+            delta = e.get('delta', {}) or {}
+            if h and not all(c == '0' for c in h[2:]):
+                key = h
+            else:
+                key = (t, delta.get('coin', ''))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(e)
+            added_any = True
+        if max_ts <= cursor:
+            break   # cursor not advancing; protect against infinite loop
+        cursor = max_ts + 1
+        if not added_any and all(int(e.get('time', 0)) > end_ms for e in d):
+            break   # all returned events are past the window
+    return out
 
 
 def pull_vault_pnl() -> pd.DataFrame:
@@ -101,18 +170,11 @@ def pull_vault_pnl() -> pd.DataFrame:
 
 
 def pull_flows() -> pd.DataFrame:
-    """For each vault, pull userNonFundingLedgerUpdates within the window."""
+    """For each vault, pull userNonFundingLedgerUpdates within the window (paginated)."""
     rows = []
     for addr, name in VAULTS.items():
         print(f'  userNonFundingLedgerUpdates: {name}')
-        d = post_info({
-            'type': 'userNonFundingLedgerUpdates',
-            'user': addr,
-            'startTime': WIN_START_MS,
-            'endTime': WIN_END_MS,
-        })
-        if not isinstance(d, list):
-            continue
+        d = post_info_paginated('userNonFundingLedgerUpdates', addr, WIN_START_MS, WIN_END_MS)
         for entry in d:
             delta = entry.get('delta', {}) or {}
             kind = delta.get('type', '')
@@ -143,18 +205,11 @@ def pull_flows() -> pd.DataFrame:
 
 
 def pull_funding() -> pd.DataFrame:
-    """For each vault, pull userFunding within the window."""
+    """For each vault, pull userFunding within the window (paginated)."""
     rows = []
     for addr, name in VAULTS.items():
         print(f'  userFunding: {name}')
-        d = post_info({
-            'type': 'userFunding',
-            'user': addr,
-            'startTime': WIN_START_MS,
-            'endTime': WIN_END_MS,
-        })
-        if not isinstance(d, list):
-            continue
+        d = post_info_paginated('userFunding', addr, WIN_START_MS, WIN_END_MS)
         for entry in d:
             delta = entry.get('delta', {}) or {}
             try:
