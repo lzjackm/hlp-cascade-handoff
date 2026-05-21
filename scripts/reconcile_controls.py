@@ -5,9 +5,11 @@ Control 1: Liquidator across Oct 29 → Nov 19. Window covers the Nov 12 event w
 Liquidator independently lost approximately $5.5M from a liquidation. Same vault, same
 data path, same magnitude. Expected gap: under $1,500.
 
-Control 2: Strategy A and Strategy B across Oct 1 → Oct 15 (the cascade window).
-Same window, same identity, different vault role (market makers, not backstop). Expected
-gap: roughly $77K and -$133K respectively, two orders of magnitude smaller than the
+Control 2: Strategy A and Strategy B across Oct 8 → Oct 15. The first `vault_pnl`
+snapshot available pre-cascade for these vaults is Oct 8 21:50 UTC (Strategy A) and
+Oct 8 23:00 UTC (Strategy B), so the window is slightly shorter than the L1/L2 Oct 1
+→ Oct 15 window. Different vault role (market makers, not backstop). Expected gap:
+roughly $44K and -$129K respectively, two orders of magnitude smaller than the
 backstop-vault gap.
 """
 import pandas as pd
@@ -68,12 +70,14 @@ reconcile('Liquidator', pd.Timestamp('2025-10-29', tz='UTC'), pd.Timestamp('2025
 
 print()
 print("=" * 90)
-print("CONTROL 2: Strategy A and Strategy B, Oct 1 → Oct 15 (cascade window, MM role)")
+print("CONTROL 2: Strategy A and Strategy B, Oct 8 → Oct 15 (cascade window, MM role)")
+print("Note: first vault_pnl snapshot available pre-cascade for these vaults is Oct 8,")
+print("not Oct 1. Window is therefore Oct 8 21:50/23:00 UTC → Oct 15 23:50 UTC.")
 print("=" * 90)
-reconcile('Strategy A', pd.Timestamp('2025-10-01', tz='UTC'), pd.Timestamp('2025-10-15T23:59', tz='UTC'),
+reconcile('Strategy A', pd.Timestamp('2025-10-08', tz='UTC'), pd.Timestamp('2025-10-15T23:59', tz='UTC'),
           fills_source='Strategy_A_daily_aggregate.csv',
           label='(market-maker control, cascade window)')
-reconcile('Strategy B', pd.Timestamp('2025-10-01', tz='UTC'), pd.Timestamp('2025-10-15T23:59', tz='UTC'),
+reconcile('Strategy B', pd.Timestamp('2025-10-08', tz='UTC'), pd.Timestamp('2025-10-15T23:59', tz='UTC'),
           fills_source='Strategy_B_daily_aggregate.csv',
           label='(market-maker control, cascade window)')
 

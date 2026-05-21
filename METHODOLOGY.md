@@ -23,10 +23,10 @@ For vaults that hold no inventory at the snapshot boundaries (which is the case 
 | **2025-10-01 → 2025-10-15 (cascade)** | **Liquidator** | **+$31,393,998** | **+$37,083,535** | **−$5,689,537** |
 | **2025-10-01 → 2025-10-15 (cascade)** | **Liquidator 2** | **+$9,592,827** | **+$14,896,979** | **−$5,304,152** |
 | 2025-10-29 → 2025-11-19 (covers Nov 12 $5.5M event) | Liquidator | −$5,497,447 | −$5,496,437 | −$1,010 |
-| 2025-10-01 → 2025-10-15 (cascade) | Strategy A | +$2,527,088 | +$2,450,044 | +$77,044 |
-| 2025-10-01 → 2025-10-15 (cascade) | Strategy B | −$2,740,462 | −$2,607,455 | −$133,006 |
+| 2025-10-08 → 2025-10-15 (cascade) | Strategy A | +$2,527,088 | +$2,483,063 | +$44,025 |
+| 2025-10-08 → 2025-10-15 (cascade) | Strategy B | −$2,740,462 | −$2,611,755 | −$128,707 |
 
-The identity ties out to under $3K for L1 across non-cascade windows and to $1,010 even when L1 has a $5.5M magnitude loss on Nov 12. The same identity diverges by $5.69M and $5.30M for the same vaults during the Oct 10-11 cascade window.
+The identity ties out to under $3K for L1 across non-cascade windows and to $1,010 even when L1 has a $5.5M magnitude loss on Nov 12. The same identity diverges by $5.69M and $5.30M for the same vaults during the Oct 10-11 cascade window. Strategy A and Strategy B run with the first available `vault_pnl` snapshot pre-cascade (Oct 8 21:50 UTC for Strategy A, Oct 8 23:00 UTC for Strategy B) through the same Oct 15 endpoint; over those slightly shorter windows the differences are roughly $44K and $129K, two orders of magnitude below the backstop-vault numbers.
 
 ## Per-day decomposition of the cascade window
 

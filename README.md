@@ -55,7 +55,7 @@ requirements.txt
 3. **The pattern looks specific to cascade events and backstop liquidator role.**
    - Non-cascade windows reconcile to under $3K for the same vault and the same code path.
    - The Nov 12 event (Liquidator independently lost ~$5.5M from a separate liquidation episode) reconciles to within $1,010.
-   - Strategy A and Strategy B over the same cascade window reconcile to within $77K and $133K, two orders of magnitude smaller than the backstop-vault difference.
+   - Strategy A and Strategy B over the cascade window (Oct 8 → Oct 15, the first `vault_pnl` snapshot available for these vaults pre-cascade is Oct 8) reconcile to within $44K and $129K, two orders of magnitude smaller than the backstop-vault difference.
 
 4. **Several candidate explanations have been tested.** See `METHODOLOGY.md` for the full set, including ADL fill enumeration, nonFundingLedger capture audit, replica_cmds chain-commit scan, SetGlobalAction mark price comparison, and a cash-flow destination search. None of them appear to account for the difference.
 
