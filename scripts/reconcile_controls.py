@@ -14,6 +14,13 @@ Oct 8 23:00 UTC (Strategy B), so the window is slightly shorter than the L1/L2 O
 → Oct 15 window. Different vault role (market makers, not backstop). Expected gap:
 roughly $44K and -$129K respectively, two orders of magnitude smaller than the
 backstop-vault gap.
+
+Note on Control 2 boundary granularity: Strategy A/B fills are bundled as daily
+aggregates, so the reconstruction includes the full Oct 8 day while the pnl_si
+window starts at the first snapshot (21:50 / 23:00 UTC). The mismatch this can
+introduce is bounded by the Oct 8 full-day closed_pnl: +$14,431 (Strategy A) and
++$4,406 (Strategy B). The reported gaps therefore carry up to that much
+boundary noise, which does not affect the order-of-magnitude conclusion.
 """
 import pandas as pd
 from pathlib import Path
@@ -78,7 +85,7 @@ print()
 print("=" * 90)
 print("CONTROL 1b: Liquidator, Oct 29 → Nov 19 (covers Nov 12 $5.5M event)")
 print("=" * 90)
-reconcile('Liquidator', pd.Timestamp('2025-10-29', tz='UTC'), pd.Timestamp('2025-11-19', tz='UTC'),
+reconcile('Liquidator', pd.Timestamp('2025-10-29', tz='UTC'), pd.Timestamp('2025-11-19T23:59', tz='UTC'),
           fills_source='Liquidator_aug1_nov19.parquet',
           label='(Nov 12 magnitude-control window)')
 

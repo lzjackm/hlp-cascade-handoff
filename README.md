@@ -21,9 +21,10 @@ pip install -r requirements.txt
 python scripts/verify_identity.py
 python scripts/reconcile_cascade.py
 python scripts/reconcile_controls.py
+python scripts/check_fees_and_duplicates.py
 ```
 
-Expected output: three scripts that reproduce the table above and demonstrate the difference is specific to the cascade window and the backstop liquidator vaults.
+Expected output: the first three scripts reproduce the table above and demonstrate the difference is specific to the cascade window and the backstop liquidator vaults. The fourth rules out fee netting and duplicate fills as reconstruction-side explanations.
 
 ## Repo layout
 
@@ -41,6 +42,7 @@ scripts/
   verify_identity.py              Demonstrates HL API internal identity ties to $0.01
   reconcile_cascade.py            Shows the L1+L2 difference for Oct 1 → Oct 15 window
   reconcile_controls.py           Non-cascade control + Strategy A/B control
+  check_fees_and_duplicates.py    Rules out fee netting and duplicate fills
   pull_data.py                    Optional: re-pull from HL API + S3 (for verification)
 METHODOLOGY.md                    Full methodology and the tests that have been run
 requirements.txt
@@ -57,7 +59,7 @@ requirements.txt
    - The Nov 12 event (Liquidator independently lost ~$5.5M from a separate liquidation episode) reconciles to within $1,010.
    - Strategy A and Strategy B over the cascade window (Oct 8 → Oct 15, the first `vault_pnl` snapshot available for these vaults pre-cascade is Oct 8) reconcile to within $44K and $129K, two orders of magnitude smaller than the backstop-vault difference.
 
-4. **Several candidate explanations have been tested.** See `METHODOLOGY.md` for the full set, including ADL fill enumeration, nonFundingLedger capture audit, replica_cmds chain-commit scan, SetGlobalAction mark price comparison, and a cash-flow destination search. None of them appear to account for the difference.
+4. **Several candidate explanations have been tested.** See `METHODOLOGY.md` for the full set, including ADL fill enumeration, nonFundingLedger capture audit, replica_cmds chain-commit scan, SetGlobalAction mark price comparison, a cash-flow destination search, fee netting, and duplicate fills. None of them appear to account for the difference. Fee netting is worth singling out: the small control-window residuals are consistent with `pnl_since_inception` being net of fees while fills' `closedPnl` is gross, but cascade-window fees ($43K and $44K) are two orders of magnitude below the cascade gaps.
 
 ## Data provenance
 
@@ -85,5 +87,7 @@ The bundled CSV is filtered to the date windows relevant to the reconciliation; 
 ## The open question
 
 For the cascade window Oct 1 → Oct 15 2025, HL's published `pnl_since_inception` for Liquidator and Liquidator 2 is lower than the sum of their fills' `closedPnl` plus funding by $5,689,537 and $5,304,152 respectively. The same identity holds to $1,010 or better in all non-cascade windows tested, including a separate $5.5M Liquidator loss event on Nov 12 2025.
+
+The precise form of the observation is that roughly $10.9M of combined equity change for these two vaults has no corresponding event in any externally visible channel: fills, funding, ledger updates, or chain-committed actions. The fills and event archives all share HL's node-data pipeline as their upstream, so whether the mechanism is an unrecorded fill or an unlogged state write cannot be distinguished from outside HL (see "Limits of external verification" in `METHODOLOGY.md`).
 
 Is there an additional component in HL's `pnl_since_inception` computation that applies specifically to backstop liquidator vaults during cascade events? If so, knowing what it is and where it lives would let this reconcile cleanly.
