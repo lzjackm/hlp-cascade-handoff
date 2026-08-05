@@ -152,11 +152,79 @@ The other reconstruction-side error that could produce a too-high `Σ closedPnl`
 
 Both fills parquets also contain zero spot fills (no `@`-prefixed or pair-style coins), so pairing scope=all `pnl_si` with perp fills introduces no scope mismatch.
 
+### Test 10: position flatness at the window boundaries
+
+Reproducible via `scripts/test_completeness_and_pricing.py`.
+
+Summing signed fill size per coin over a window gives zero if and only if the book returns to its starting position. Both vaults hold only cash at the bracketing vault snapshots, so zero net means the book is flat at both ends.
+
+| Window | Vault | Fills | Coins | Coins with nonzero net | Total abs net |
+|---|---|---|---|---|---|
+| Hydromancer snap-to-snap | Liquidator | 175,565 | 165 | 0 | 0.000000 |
+| Hydromancer snap-to-snap | Liquidator 2 | 29,341 | 4 | 0 | 0.000000 |
+| Headline cascade window | Liquidator | 185,741 | 165 | 0 | 0.000000 |
+| Headline cascade window | Liquidator 2 | 29,341 | 4 | 0 | 0.000000 |
+
+Two consequences, and the first is the stronger claim in this repo.
+
+1. **No price-based explanation can contribute to the gap.** Mark price only affects open positions. If the book is exactly flat at both ends of the window, unrealized MTM is zero at both ends under any mark convention, however stale, deviating, or mismarked. The HL/Binance dislocation during the cascade (roughly 11 percentage points inside seven minutes) therefore cannot move the reconciliation identity across these boundaries. Intraday mark deviation, snap-time mismarking, and cost-basis convention are all excluded by construction rather than by measurement.
+
+2. **It is an independent fill-completeness check.** A fill missing from the dataset would leave a phantom open position behind and show up as nonzero net for that coin. Exact zero across 165 coins and 185,741 fills is not achievable under random fill loss. This argument needs no external data source.
+
+### Test 11: isolated-margin accounting
+
+Reproducible via `scripts/test_completeness_and_pricing.py`.
+
+A liquidated isolated-margin position has its own margin bucket, so realized PnL could in principle be capped by that bucket while `closedPnl` reports the full amount. The direction fits: it would overstate cash accrual, produce a negative residual, leave no ledger footprint, and concentrate in a mass-liquidation event. The test is one of magnitude.
+
+| Vault | Isolated Σ closedPnl | Residual | Share |
+|---|---|---|---|
+| Liquidator | $43,075 | −$5,689,537 | 0.8%, wrong sign |
+| Liquidator 2 | $283,361 | −$5,304,152 | 5.3%, wrong sign |
+
+Two orders of magnitude too small on Liquidator. Rejected.
+
+### Test 12: uniform-rate charge
+
+Reproducible via `scripts/test_completeness_and_pricing.py`.
+
+If the residual were a structural charge levied at a fixed rate, whether a notional haircut or a leader profit share, the implied rate would agree across the two vaults on some common base. It does not agree on any base tried.
+
+| Base | Liquidator | Liquidator 2 | Ratio |
+|---|---|---|---|
+| % of window notional | 0.3575% | 0.1848% | 1.94x |
+| % of closing notional | 0.6982% | 0.3676% | 1.90x |
+| % of Σ closedPnl | 15.57% | 35.67% | 0.44x |
+
+A flat profit-share rate is excluded by the same figures.
+
+One counter-observation, offered as a shape rather than a mechanism, and weak at n=2: the two residuals differ by only 1.07x in dollars while window notional differs 1.80x and Σ closedPnl differs 2.46x. Every activity-based normalization makes the two vaults less alike, not more. That is more consistent with a fixed per-vault adjustment than with anything proportional to trading activity.
+
+### Test 13: independent second-indexer verification
+
+Reproducible via `scripts/crosscheck_hypedexer.py` (requires a `HYPEDEXER_API_KEY`).
+
+The cascade window was re-pulled from the Hypedexer indexer, a separate indexing pipeline from the S3 node-data path used here, and compared at `tid` level. The question is not whether the totals match, but whether the other index holds any fill this repo lacks.
+
+| | Liquidator | Liquidator 2 |
+|---|---|---|
+| In both | 151,395 | 24,247 |
+| Only this repo | 29,733 | 5,094 |
+| **Only Hypedexer** | **0** | **0** |
+| Shared-subset closedPnl max abs diff | **0.000000** | **0.000000** |
+| Shared-subset mismatches | 0 | 0 |
+
+No external index holds a fill this repo lacks, and every one of the 175,642 shared fills agrees on `closedPnl` at full precision.
+
+Their shortfall is a defect in their ingest, not a signal. Coverage is exact in every hour of the window except 21:00 on Oct 10, where everything from roughly 21:29:07 onward is absent (Liquidator 29,733 fills / $13,876,563.78; Liquidator 2 5,094 fills / $9,135,432.08). The Liquidator 2 figure is identical to the under-report in the same provider's slim CSV export, indicating one shared upstream truncation rather than two separate export bugs. It lands on the 21:22 to 21:59 cleanup phase.
+
 ## Limits of external verification
 
-The fills data here comes from `s3://hl-mainnet-node-data/node_fills_by_block/`, and the independent per-event walk that confirmed the same gap used `misc_events_by_block` from the same bucket. Both are produced by HL's node-data pipeline, so they share an upstream. A fill emitted by the matching engine but never written to node data would be invisible to both, and externally indistinguishable from a balance write that produces no logged event.
+The fills data here comes from `s3://hl-mainnet-node-data/node_fills_by_block/`, and the independent per-event walk that confirmed the same gap used `misc_events_by_block` from the same bucket. Both are produced by HL's node-data pipeline, so they share an upstream. A fill emitted by the matching engine but never written to node data would be invisible to both, and externally indistinguishable from a balance write that produces no logged event. This remains the binding limit.
 
-At the time of the original analysis, 2,000 sampled fills matched HL's `userFillsByTime` API to four decimal places. A full-window independent re-pull from that API is no longer possible because it retains only recent fills per user, and the cascade window contains 185K+ fills for Liquidator alone.
+Fill completeness itself is no longer part of that limit. The original analysis could only verify 2,000 sampled fills against HL's `userFillsByTime`, because that endpoint retains only recent fills per user. Two later results supersede that caveat: Test 13 verifies all 175,642 fills held by a second indexer with zero mismatches and zero fills unique to that indexer, and Test 10 shows the position book closes to exactly zero across 165 coins, which no lossy fill set would satisfy.
+
+A third-party intraday equity series for the sub-vaults is not obtainable. The one indexer offering vault equity snapshots at higher-than-daily cadence begins collecting in June 2026, and its vault ledger endpoint returns empty. A snapshot has to be recorded at the moment it describes, and no external party runs HyperCore replay, so Oct 2025 intraday account value cannot be reconstructed after the fact from outside HL.
 
 The defensible form of the claim is therefore: roughly $10.9M of combined Liquidator and Liquidator 2 equity change during the cascade window has no corresponding event in any externally visible channel (fills, funding, ledger updates, or chain-committed actions). Whether the mechanism is an unrecorded fill or an unlogged state write cannot be distinguished from outside HL.
 
