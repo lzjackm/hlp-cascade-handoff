@@ -36,7 +36,9 @@ WINDOWS = {
     ),
 }
 
-SIDE_SIGN = {"B": 1, "A": -1}
+SIDE_SIGN = {"buy": 1, "sell": -1}
+# Per-coin sums of float sizes carry rounding noise of order 1e-9 on sizes up to 1e9.
+FLAT_TOL = 1e-6
 
 
 def load(path):
@@ -61,13 +63,16 @@ def test_10_flatness(frames):
             if w.empty:
                 print(f"    {name:14} no fills in window")
                 continue
-            w["signed"] = w.sz * w.side.map(SIDE_SIGN)
+            sign = w.side.map(SIDE_SIGN)
+            if sign.isna().any():
+                raise ValueError(f"unmapped side values: {sorted(w.side[sign.isna()].unique())}")
+            w["signed"] = w.sz * sign
             net = w.groupby("coin").signed.sum()
-            nonzero = net[net.abs() > 1e-9]
+            nonzero = net[net.abs() > FLAT_TOL]
             print(
                 f"    {name:14} fills={len(w):>7,}  coins={net.size:>3}  "
                 f"coins_with_nonzero_net={len(nonzero):>3}  "
-                f"total_abs_net={net.abs().sum():.6f}"
+                f"max_abs_net={net.abs().max():.1e}"
             )
             if len(nonzero):
                 print("      residual positions:")
