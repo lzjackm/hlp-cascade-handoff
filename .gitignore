@@ -21,3 +21,6 @@ Thumbs.db
 
 # Output of pull_data.py (re-pulled artifacts for verification)
 data/from_api/
+
+# Output of verify_from_raw.py extract (rebuilt from raw node data for verification)
+data/from_raw/

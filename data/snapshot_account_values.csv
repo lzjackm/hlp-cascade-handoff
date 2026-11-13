@@ -1,0 +1,5 @@
+vault,address,block,ts,account_value,source
+Liquidator,0x2e3d94f0562703b25c83308a05046ddaf9a8dd14,758750000,2025-10-10T20:04:54.218Z,904733.127536,Hydromancer Reservoir account_values; identical in the ConejoCapital HyperReplay clearinghouse snapshot
+Liquidator 2,0xb0a55f13d22f66e6d495ac98113841b2326e9540,758750000,2025-10-10T20:04:54.218Z,7500000.0,Hydromancer Reservoir account_values; identical in the ConejoCapital HyperReplay clearinghouse snapshot
+Liquidator,0x2e3d94f0562703b25c83308a05046ddaf9a8dd14,759830000,2025-10-11T20:09:51.920Z,5000233.429669,Hydromancer Reservoir account_values
+Liquidator 2,0xb0a55f13d22f66e6d495ac98113841b2326e9540,759830000,2025-10-11T20:09:51.920Z,30000000.0,Hydromancer Reservoir account_values
