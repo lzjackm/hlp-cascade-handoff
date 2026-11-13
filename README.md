@@ -21,7 +21,7 @@ Both vaults were liquidated themselves during the cascade, and the cash each liq
 - **Self-liquidation rounds.** Between 21:16:04 and 21:20:04 UTC on Oct 10, Liquidator is the liquidated user on its own backstop fills in 12 blocks and Liquidator 2 in 7. Node fills mark them with `liquidation.method = "backstop"` and `liquidation.liquidatedUser` equal to the vault's own address. The counterparties are traders whose fills read `Auto-Deleveraging`.
 - **Whole book closed each round.** Each round closes every open position of the vault in one block: $700.2M of Liquidator notional and $1.30B of Liquidator 2 notional across the rounds. HL's `startPosition` field confirms the book is flat after every round.
 - **Positive cash left behind.** The auto-deleveraging fills execute above the current mark for the vault's long positions, $8.40M (Liquidator) and $6.56M (Liquidator 2) above `markPx` in total, so each round leaves the vault holding positive cash according to its fills.
-- **That cash is removed.** The vault's account value afterwards does not contain it. No fill, funding payment or ledger update records the removal.
+- **That cash is removed.** The vault's account value afterwards does not contain it. No fill, funding payment or ledger update records the removal. It is credited to the Assistance Fund and the HLP parent vault, like trading fees (see "Where the removed balance went").
 
 | | Liquidator | Liquidator 2 |
 |---|---|---|
@@ -63,7 +63,14 @@ python scripts/verify_from_raw.py incoming --raw-dir RAW
 python scripts/verify_from_raw.py counterparties --raw-dir RAW --live
 ```
 
-`RAW` holds the Oct 10 20:00-22:00 UTC node fills and misc events plus the clearinghouse snapshot at block 758750000. The script docstring lists the expected file names, all of which are mirrored in [ConejoCapital/HyperReplay](https://github.com/ConejoCapital/HyperReplay).
+`trace_destination.py` runs Test 19. It downloads about 3.5 GB of requester-pays S3 data (HL node data for Oct 10 01:00 to Oct 11 03:00 UTC and two Artemis account snapshots) and diffs every account's USDC:
+
+```bash
+python scripts/trace_destination.py download --raw-dir RAW19 --profile YOUR_AWS_PROFILE
+python scripts/trace_destination.py run --raw-dir RAW19 --work WORK
+```
+
+For `verify_from_raw.py`, `RAW` holds the Oct 10 20:00-22:00 UTC node fills and misc events plus the clearinghouse snapshot at block 758750000. The script docstring lists the expected file names, all of which are mirrored in [ConejoCapital/HyperReplay](https://github.com/ConejoCapital/HyperReplay).
 
 ## Repo layout
 
@@ -89,6 +96,7 @@ scripts/
   test_self_liquidation.py        Self-liquidation rounds, reconciliation, Nov 12 control
   crosscheck_hypedexer.py         Optional: tid-level diff against a second indexer (needs API key)
   verify_from_raw.py              Optional: rebuild the cascade extract, Tests 17-18 (needs raw node data)
+  trace_destination.py            Optional: Test 19, per-account USDC diff across all accounts (needs S3 data)
   pull_data.py                    Optional: re-pull from HL API + S3 (for verification)
 METHODOLOGY.md                    Full methodology and the tests that have been run
 requirements.txt
@@ -96,7 +104,7 @@ requirements.txt
 
 ## What the data shows
 
-1. **The difference is the cash removed after the vaults' own liquidations.** It reconciles to −$1,151 and −$61 against the headline difference and to −$1,113 and −$61 against the snapshot account values (Tests 14 and 15).
+1. **The difference is the cash removed after the vaults' own liquidations.** It reconciles to −$1,151 and −$61 against the headline difference and to −$1,113 and −$61 against the snapshot account values (Tests 14 and 15). The removed cash went to the Assistance Fund (99%) and the HLP parent vault (1%) (Test 19).
 
 2. **The difference shows up consistently across sources.** Three independent inputs (HL API `vault_pnl`, S3 `node_fills_by_block`, and HL API funding) give the same per-vault magnitudes.
 
@@ -125,6 +133,7 @@ requirements.txt
 | `fills/Liquidator*.parquet` | `s3://hl-mainnet-node-data/node_fills_by_block/`, address-filtered |
 | `fills/cascade_L1_L2_20251010_h20_h21.parquet` | `node_fills_by_block` for Oct 10 20:00-22:00 UTC, address-filtered, keeping block order, `startPosition` and the `liquidation` fields |
 | `fills/Strategy_*_daily_aggregate.csv` | Same S3 source, aggregated to per-day closed_pnl sums |
+| `destination_summary.csv` | Output of `trace_destination.py run` (Test 19), aggregates only |
 
 The cascade extract keeps the liquidation method and mark price of each fill, and records only whether the liquidated user is the vault itself, so no third-party address is bundled. It matches the S3-derived `fills/Liquidator*.parquet` files tid for tid over the same hours, and `verify_from_raw.py extract` rebuilds the same table from the raw files.
 
@@ -143,12 +152,18 @@ diff data/funding.csv              data/from_api/funding.csv
 
 The bundled CSV is filtered to the date windows relevant to the reconciliation; the API pull includes the full history. Inner-joining on `(ts, vault, scope)`, all 82 bundled `vault_pnl` rows tie to the API pull at $0.00 for `account_value` and `pnl_since_inception` and within $0.11 for `flow_cum` (derived as `account_value - pnl_since_inception`).
 
-## The remaining question
+## Where the removed balance went
 
-About $10.89M left the two vaults with no ledger event, immediately after each vault's own liquidation rounds on Oct 10. The removed amount, its timing and the rule behind it are established from public data. The account it went to is not:
+The removed balances were credited to the same accounts that receive Hyperliquid's protocol fees, in the same proportion, with no ledger event (Test 19):
 
-- **Not the auto-deleveraged traders.** Accounts untouched since the cascade hold exactly the cash their fills imply, with no pro-rata share (Test 18).
-- **Not the HLP parent or sibling vaults.** Both reconcile.
-- **Not a ledger recipient.** No address receives a LedgerUpdate of that size in the cascade window (Test 4).
+| Recipient | Address | Received | Share |
+|---|---|---|---|
+| Assistance Fund | `0xfefefefefefefefefefefefefefefefefefefefe` | $11,827,162 | 98.99% |
+| HLP parent vault | `0xdfc24b077bc1425ad1dea75bcb6f8158e10df303` | $120,744 | 1.01% |
+| **Total** | | **$11,947,906** | |
 
-When a liquidator vault is liquidated through auto-deleveraging and has positive equity left over, which account is that remainder credited to?
+- **Not only HLP's vaults.** The removal applies to every account liquidated through auto-deleveraging that evening: 1,400 accounts and $11,984,273 in total, of which $10,890,262 came from Liquidator and Liquidator 2 and $1,094,011 from 1,398 other traders. The amount credited to the two recipients matches the amount removed to within $36K (0.3%).
+- **Booked like fee revenue.** In an 18-hour window without auto-deleveraging, the Assistance Fund receives 96.43% of protocol fees and the HLP parent 0.96%, a 99.01 / 0.99 split. The removed balances split 98.99 / 1.01.
+- **Spent on HYPE.** The Assistance Fund's spending matches its fee income until the first self-liquidation round at 21:16:04 UTC; from then on it outspends fee income by up to $11.83M. Between 21:16 and 23:20 UTC it spent $14.16M of USDC, mostly buying HYPE on the HYPE/USDC book, before returning to its usual pace of about $0.35M per hour.
+
+Tests 17 and 18 already show that neither the liquidated users nor the auto-deleveraged traders received it.

@@ -54,9 +54,9 @@ The removed balances account for every structural feature of the gap.
 - **Backstop vaults only.** Strategy A and Strategy B were never liquidated.
 - **Absolute, not proportional.** The amount is the cash each vault held at the end of its own rounds, unrelated to notional or `closedPnl`, which is why no uniform rate fits both vaults (Test 12).
 - **Nov 12 reconciles.** Liquidator is liquidated once that day, but the remainder is negative and HL leaves it on the account (Test 16).
-- **No ledger event.** The removal is a balance change without a LedgerUpdate, which is why the destination search (Test 4) and the per-event walk found nothing to attribute it to.
+- **No ledger event.** The removal, and the matching credit to the fee recipients, are balance changes without a LedgerUpdate, which is why the destination search (Test 4) and the per-event walk found nothing to attribute it to.
 
-Tests 14 to 18 below verify each step. The account that receives the removed balance is the one open item (see "Limits of external verification").
+Tests 14 to 18 below verify each step. Test 19 traces the removed balance to its recipients: the Assistance Fund (98.99%) and the HLP parent vault (1.01%), the accounts and proportions that receive protocol fees.
 
 ## Per-day decomposition of the cascade window
 
@@ -371,6 +371,53 @@ Querying the 2,000 accounts with the largest predicted shares (the script defaul
 
 The 13 untouched accounts would have been owed $578.26 between them under a pro-rata credit, up to $104.17 for a single account. Each holds exactly its fill-implied cash instead. The traders on the other side of the close-out fills were settled at the recorded fill prices and received none of the removed balance. The remaining 1,778 flat accounts have traded or moved funds since and do not bear on the test.
 
+### Test 19: recipients of the removed balances
+
+Reproducible via `scripts/trace_destination.py` (about 3.5 GB of requester-pays S3 data). Results in `data/destination_summary.csv`.
+
+The test diffs every Hyperliquid account's USDC between two states, where USDC means perp raw cash (account value minus signed position value) plus spot USDC. Perp and spot transfers therefore cancel and no mark price is needed:
+
+```
+residual = USDC at the end − (USDC at the start + fill cash − fees + funding + ledger flows)
+```
+
+The states are the clearinghouse snapshot at block 758750000 (20:04:54 UTC Oct 10) and the Artemis account crawls of Oct 10 (about 01:56 UTC) and Oct 11 (about 01:54 UTC), each account taken at its own query time. HL credits some accounts without a ledger event, protocol fees in particular, and those accounts show a positive residual.
+
+**Control window: Artemis Oct 10 → snapshot, no auto-deleveraging.** Of 547,775 accounts, 89 are off by more than $1. Accounts that receive fees show positive residuals, which give the fee split:
+
+| | Residual | Share of protocol fees (net of builder fees) |
+|---|---|---|
+| Protocol fees in window | $4,061,898 | |
+| Assistance Fund | $3,916,792 | 96.43% |
+| HLP parent vault | $39,087 | 0.96% |
+
+The remaining 2.61% is consistent with referral rewards, which accrue off-balance until claimed.
+
+**Cascade window: snapshot → Artemis Oct 11.** Of 616,010 accounts, 1,946 are off by more than $1. Two accounts gain large amounts with no event behind them:
+
+| | Residual | Fee share at control rates | Excess |
+|---|---|---|---|
+| Assistance Fund | $16,585,727 | $4,758,566 | **$11,827,162** |
+| HLP parent vault | $168,231 | $47,488 | **$120,744** |
+| **Total** | | | **$11,947,906** |
+
+The accounts liquidated through auto-deleveraging during the cascade (backstop fills whose counterparty reads `Auto-Deleveraging`) number 1,400. 1,019 of them show a negative residual beyond $1, with a median of −$6.97. The removal therefore applies to every account liquidated this way, not only the two vaults:
+
+| Removed from | Amount |
+|---|---|
+| Liquidator and Liquidator 2 (Test 14) | $10,890,262 |
+| 1,398 other accounts liquidated through auto-deleveraging | $1,094,011 |
+| **Total removed** | **$11,984,273** |
+
+The excess credited to the Assistance Fund and the HLP parent matches the total removed to within −$36K (0.3%). It splits 98.99 / 1.01 between them, against a fee split of 99.01 / 0.99.
+
+Timing points the same way. The Assistance Fund spends its USDC on HYPE as it arrives. Its implied balance, built from fee income at the control share alone, never falls more than $1,485 below zero before the first self-liquidation round at 21:16:04 UTC, which is ordinary timing between fee credits and purchases. After that round it falls to −$11,826,039, so the extra USDC it spent arrived from 21:16 onward. Between 21:16 and 23:20 UTC it spent $14.16M of USDC, mostly buying HYPE on the HYPE/USDC book, before returning to its usual pace of about $0.35M per hour.
+
+Two caveats:
+
+- **Calibration window.** The fee shares come from a different window, which is the most likely source of the 0.3% difference.
+- **Snapshot artifacts.** A few accounts show residuals of equal size and opposite sign in the two windows, for example $250,000. Their balances are misstated in the snapshot that both windows share. None of them is a recipient here.
+
 ## Limits of external verification
 
 The mechanism is visible in public node data. The self-liquidation fills, their timing and the cash each round leaves behind are all in `node_fills_by_block`. A fill missing from node data cannot be the source of the gap, for two reasons:
@@ -380,17 +427,13 @@ The mechanism is visible in public node data. The self-liquidation fills, their 
 
 Fill completeness holds across the window more broadly as well. Test 13 verifies all 175,642 fills held by a second indexer, with zero mismatches and zero fills unique to that indexer, and Test 10 shows the position book nets to zero across 165 coins, which no lossy fill set would satisfy.
 
-What public data does not show is where the removed balance goes. The removal produces no fill, funding payment or LedgerUpdate, and three candidate destinations are excluded:
-
-- **The auto-deleveraged traders** do not receive it (Test 18).
-- **HLP's other vaults** reconcile without it.
-- **Ledger recipients:** no LedgerUpdate recipient matches its size (Test 4).
+The removal and the matching credit to the fee recipients produce no LedgerUpdate, so neither appears as an event. Both show up only as unexplained balance changes in a full-account diff (Test 19).
 
 The replica_cmds scan (Test 5) and the validator constraints (Test 7) describe how far outside access reaches toward HL's internal state writes.
 
 A third-party intraday equity series for the sub-vaults is not obtainable. The one indexer offering vault equity snapshots at higher-than-daily cadence begins collecting in June 2026, and its vault ledger endpoint returns empty. A snapshot has to be recorded at the moment it describes, and no external party runs HyperCore replay, so Oct 2025 intraday account value cannot be reconstructed after the fact from outside HL. The reconciliation does not need it, because the vaults are flat after every round and the removed amounts follow from cash alone.
 
-The defensible form of the claim is therefore: about $10.89M of Liquidator and Liquidator 2 cash was removed immediately after the vaults' own liquidation rounds on Oct 10, in amounts equal to the positive cash each round left behind. Which account receives that remainder, if any, can only be answered from inside HL.
+The defensible form of the claim is therefore: about $10.89M of Liquidator and Liquidator 2 cash, and $1.09M from 1,398 other accounts, was removed immediately after those accounts were liquidated through auto-deleveraging on Oct 10, in amounts equal to the positive cash each liquidation left behind. The Assistance Fund and the HLP parent vault received it, split like protocol fees. Why the clearinghouse treats this remainder as fee revenue is a design question only HL can answer.
 
 ## What this repo intentionally excludes
 
@@ -400,4 +443,4 @@ This repo excludes:
 - HLP parent vault fills (parent is cash-only, doesn't take directional positions; not relevant to the L1/L2 reconciliation).
 - Liquidator 3 and Liquidator 4 fills (these vaults were created post-cascade and have no activity in the relevant window).
 - Dashboard product code, share-of-volume analysis, touch-flow methodology, or any non-reconciliation HLP analysis.
-- Third-party account data. Tests 17 and 18 use other users' fills, ledger events and balances. `verify_from_raw.py` derives these from raw node data at run time and prints results without account addresses. No third-party address is bundled, and the cascade extract records only whether a fill's liquidated user is the vault itself.
+- Third-party account data. Tests 17, 18 and 19 use other users' fills, ledger events and balances. `verify_from_raw.py` and `trace_destination.py` derive these from raw data at run time and output aggregates without account addresses, apart from the two protocol recipients. No third-party address is bundled, and the cascade extract records only whether a fill's liquidated user is the vault itself.
