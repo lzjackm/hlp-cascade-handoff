@@ -104,4 +104,4 @@ reconcile('Strategy B', pd.Timestamp('2025-10-08', tz='UTC'), pd.Timestamp('2025
 
 print()
 print("Expected: both controls reconcile to far below the $5M-per-vault cascade gap.")
-print("This rules out: pipeline bug, structural backstop-accounting issue, generic cascade artifact.")
+print("This rules out: pipeline bug, an always-on backstop-accounting effect, generic cascade artifact.")

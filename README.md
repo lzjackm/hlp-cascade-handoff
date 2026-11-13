@@ -1,6 +1,6 @@
 # HLP Cascade Reconciliation: Oct 10-11 2025 Liquidator and Liquidator 2
 
-Reproduction repo for a discrepancy observed in HLP backstop liquidator vault accounting during the Oct 10-11 2025 cascade event. The goal of this repo is to share the data and methodology that produces the observation, so the underlying mechanism can be discussed.
+Reproduction repo for a discrepancy in HLP backstop liquidator vault accounting during the Oct 10-11 2025 cascade, and for the mechanism that produces it. The bundled data and scripts reproduce both the gap and its reconciliation.
 
 ## The observation
 
@@ -12,7 +12,31 @@ For the window Oct 1 23:50 UTC through Oct 15 22:10 UTC, the sum of fills' `clos
 | Liquidator 2 | `0xb0a55f13d22f66e6d495ac98113841b2326e9540` | +$9,592,827 | +$14,896,979 | **−$5,304,152** |
 | **Total** | | | | **−$10,993,689** |
 
-The identity `account_value Δ = pnl_since_inception Δ + flow_cum Δ` ties out to about $0.01 in HL's own published numbers for both vaults, so this looks like an accounting question about how `pnl_since_inception` is computed rather than a missing-flow question.
+HL's own numbers tie out to one another: `account_value Δ = pnl_since_inception Δ + flow_cum Δ` holds to about $0.01 for both vaults. The difference is a real reduction in account value, not a quirk of how `pnl_since_inception` is computed.
+
+## The mechanism
+
+Both vaults were liquidated themselves during the cascade, and the cash each liquidation left behind was removed from the account.
+
+- **Self-liquidation rounds.** Between 21:16:04 and 21:20:04 UTC on Oct 10, Liquidator is the liquidated user on its own backstop fills in 12 blocks and Liquidator 2 in 7. Node fills mark them with `liquidation.method = "backstop"` and `liquidation.liquidatedUser` equal to the vault's own address. The counterparties are traders whose fills read `Auto-Deleveraging`.
+- **Whole book closed each round.** Each round closes every open position of the vault in one block: $700.2M of Liquidator notional and $1.30B of Liquidator 2 notional across the rounds. HL's `startPosition` field confirms the book is flat after every round.
+- **Positive cash left behind.** The auto-deleveraging fills execute above the current mark for the vault's long positions, $8.40M (Liquidator) and $6.56M (Liquidator 2) above `markPx` in total, so each round leaves the vault holding positive cash according to its fills.
+- **That cash is removed.** The vault's account value afterwards does not contain it. No fill, funding payment or ledger update records the removal.
+
+| | Liquidator | Liquidator 2 |
+|---|---|---|
+| Self-liquidation rounds, Oct 10 UTC | 12, 21:16:04 to 21:20:04 | 7, 21:17:06 to 21:19:52 |
+| Cash removed after the rounds | $5,631,665.60 | $5,258,596.14 |
+| Headline difference restated as cash change outside fills | −$5,632,816.60 | −$5,258,657.60 |
+| **Residual** | **−$1,151.00** | **−$61.46** |
+
+The restatement adds back fees and the gap between fill-price cash and `closedPnl` (Test 15). Three further checks fit the same mechanism:
+
+- **Timing.** With the removal, each of the 19 rounds fires when the vault's equity at the current mark is below zero (−$12K to −$1.21M). Without it, rounds 2 onward would fire while the vault held +$0.9M to +$5.3M.
+- **Snapshot closure.** From the Oct 10 20:04:54 snapshot to the Oct 11 20:09:51 snapshot, fills, fees, funding and flows minus the removed cash land within $1,113 (Liquidator) and $61 (Liquidator 2) of the reported account value.
+- **Nov 12 control.** Liquidator is liquidated once on Nov 12 (16:08:14 UTC, POPCAT), with a negative remainder of −$518,731 after the round. HL keeps that balance on the account (−$518,812 at 23:50, cleared by a $518,811.82 parent deposit on Nov 15), which is why that window reconciles.
+
+The two other parties to these fills are settled exactly as recorded. Takeovers into the vaults price at each liquidated user's account value (Test 17). Traders auto-deleveraged against the vaults hold exactly the cash their fills imply (Test 18).
 
 ## Quick start
 
@@ -23,16 +47,23 @@ python scripts/reconcile_cascade.py
 python scripts/reconcile_controls.py
 python scripts/check_fees_and_duplicates.py
 python scripts/test_completeness_and_pricing.py
+python scripts/test_self_liquidation.py
 ```
 
-Expected output: the first three scripts reproduce the table above and demonstrate the difference is specific to the cascade window and the backstop liquidator vaults. The fourth rules out fee netting and duplicate fills as reconstruction-side explanations. The fifth shows the position book is exactly flat at both window boundaries, which excludes every price-based explanation, and rules out isolated-margin accounting and uniform-rate charges.
+Expected output: the first three scripts reproduce the observation table and show the difference is specific to the cascade window and the backstop liquidator vaults. The fourth rules out fee netting and duplicate fills. The fifth shows the position book is flat at both window boundaries, which excludes every price-based explanation, and rules out isolated-margin accounting and uniform-rate charges. The sixth lists the self-liquidation rounds, reconciles the difference to the residuals above, and runs the Nov 12 control.
 
-One further script needs a Hypedexer API key and re-pulls the same window from a second, independent indexer:
+Two further scripts need inputs outside the repo. `crosscheck_hypedexer.py` re-pulls the cascade window from a second, independent indexer and needs a Hypedexer API key. `verify_from_raw.py` rebuilds the cascade extract from raw node data and runs Tests 17 and 18, which need other users' fills and balances:
 
 ```bash
 export HYPEDEXER_API_KEY=...
 python scripts/crosscheck_hypedexer.py
+
+python scripts/verify_from_raw.py extract --raw-dir RAW
+python scripts/verify_from_raw.py incoming --raw-dir RAW
+python scripts/verify_from_raw.py counterparties --raw-dir RAW --live
 ```
+
+`RAW` holds the Oct 10 20:00-22:00 UTC node fills and misc events plus the clearinghouse snapshot at block 758750000. The script docstring lists the expected file names, all of which are mirrored in [ConejoCapital/HyperReplay](https://github.com/ConejoCapital/HyperReplay).
 
 ## Repo layout
 
@@ -40,10 +71,13 @@ python scripts/crosscheck_hypedexer.py
 data/
   vault_pnl_snapshots.csv         HL API snapshots, L1+L2+Strategy A+B, Oct 1 - Nov 19
   vault_flows.csv                 nonFundingLedger flow events, same vaults+window
-  funding.csv                     funding events, same vaults+window
+  funding.csv                     funding events, same vaults+window (HL daily buckets, see below)
+  funding_hourly_20251010.csv     hourly funding events for L1+L2, Oct 10 20:00-22:00 UTC
+  snapshot_account_values.csv     L1+L2 account value at blocks 758750000 and 759830000
   fills/
     Liquidator_aug1_nov19.parquet         Raw fills for Liquidator (covers all control windows)
     Liquidator_2_oct1_nov19.parquet       Raw fills for Liquidator 2
+    cascade_L1_L2_20251010_h20_h21.parquet  L1+L2 fills Oct 10 20:00-22:00 UTC with liquidation fields
     Strategy_A_daily_aggregate.csv        Daily closed_pnl sum (MM detail aggregated)
     Strategy_B_daily_aggregate.csv        Daily closed_pnl sum (MM detail aggregated)
 scripts/
@@ -52,28 +86,32 @@ scripts/
   reconcile_controls.py           Non-cascade control + Strategy A/B control
   check_fees_and_duplicates.py    Rules out fee netting and duplicate fills
   test_completeness_and_pricing.py  Boundary flatness, isolated margin, uniform-rate charges
+  test_self_liquidation.py        Self-liquidation rounds, reconciliation, Nov 12 control
   crosscheck_hypedexer.py         Optional: tid-level diff against a second indexer (needs API key)
+  verify_from_raw.py              Optional: rebuild the cascade extract, Tests 17-18 (needs raw node data)
   pull_data.py                    Optional: re-pull from HL API + S3 (for verification)
 METHODOLOGY.md                    Full methodology and the tests that have been run
 requirements.txt
 ```
 
-## What the data suggests
+## What the data shows
 
-1. **The difference shows up consistently across sources.** Three independent inputs (HL API `vault_pnl`, S3 `node_fills_by_block`, and HL API funding) give the same per-vault magnitudes.
+1. **The difference is the cash removed after the vaults' own liquidations.** It reconciles to −$1,151 and −$61 against the headline difference and to −$1,113 and −$61 against the snapshot account values (Tests 14 and 15).
 
-2. **HL's published numbers tie out to one another.** `account_value Δ = pnl_since_inception Δ + flow_cum Δ` agrees at the cent level for both vaults across the window. The difference described above sits between HL's `pnl_since_inception` value and the sum of `closedPnl` across the fills HL itself records for these vaults.
+2. **The difference shows up consistently across sources.** Three independent inputs (HL API `vault_pnl`, S3 `node_fills_by_block`, and HL API funding) give the same per-vault magnitudes.
 
-3. **The pattern looks specific to cascade events and backstop liquidator role.**
+3. **HL's published numbers tie out to one another.** `account_value Δ = pnl_since_inception Δ + flow_cum Δ` agrees at the cent level for both vaults. The removal lowers account value and `pnl_since_inception` together, so it surfaces as a gap against the sum of `closedPnl` over the fills HL itself records.
+
+4. **The pattern is specific to the cascade and to the backstop role.** The cascade is the only window in which the vaults were liquidated with positive cash left over.
    - Non-cascade windows reconcile to under $3K for the same vault and the same code path.
-   - The Nov 12 event (Liquidator independently lost ~$5.5M from a separate liquidation episode) reconciles to within $1,010.
-   - Strategy A and Strategy B over the cascade window (Oct 8 → Oct 15, the first `vault_pnl` snapshot available for these vaults pre-cascade is Oct 8) reconcile to within $44K and $129K, two orders of magnitude smaller than the backstop-vault difference.
+   - On Nov 12 Liquidator was liquidated once, but the remainder was negative and stayed on the account. That window reconciles to within $1,010 (Test 16).
+   - Strategy A and Strategy B over the cascade window (Oct 8 → Oct 15, the first `vault_pnl` snapshot available for these vaults pre-cascade is Oct 8) reconcile to within $44K and $129K.
 
-4. **Several candidate explanations have been tested.** See `METHODOLOGY.md` for the full set, including ADL fill enumeration, nonFundingLedger capture audit, replica_cmds chain-commit scan, SetGlobalAction mark price comparison, a cash-flow destination search, fee netting, duplicate fills, isolated-margin accounting, and uniform-rate charges. None of them appear to account for the difference. Fee netting is worth singling out: the small control-window residuals are consistent with `pnl_since_inception` being net of fees while fills' `closedPnl` is gross, but cascade-window fees ($43K and $44K) are two orders of magnitude below the cascade gaps.
+5. **The difference is a cash change, not a valuation one.** Signed fill size per coin nets to zero over the window for all 165 Liquidator coins and all 4 Liquidator 2 coins, so unrealized MTM is zero at both ends under any mark convention (Test 10).
 
-5. **The difference is a cash discrepancy, not a valuation one.** Summing signed fill size per coin over the window gives exactly zero for all 165 Liquidator coins and all 4 Liquidator 2 coins, on both the snap-to-snap and the headline window. The book is flat at both ends, so unrealized MTM is zero at both ends under any mark convention and no price-deviation story can reach the identity. The same zero is an independent completeness check, since a missing fill would leave a phantom open position (Test 10).
+6. **The fill set is complete.** A running position started from zero at the Oct 10 snapshot matches HL's `startPosition` on every one of the 104,467 vault fills between 20:04 and 22:00 UTC (Test 14). A tid-level comparison against a second indexer finds zero fills held by that indexer and not by this repo (Test 13).
 
-6. **Fill completeness is independently corroborated.** A tid-level comparison against a second indexer over the cascade window finds zero fills held by that indexer and not by this repo, and `closedPnl` agreement at full precision on all 175,642 shared fills (Test 13).
+7. **Other candidate explanations fail.** `METHODOLOGY.md` covers ADL fill enumeration, nonFundingLedger capture, a replica_cmds chain-commit scan, SetGlobalAction mark prices, a cash-flow destination search, fee netting, duplicate fills, isolated-margin accounting and uniform-rate charges. Fee netting accounts for the small control-window residuals (`pnl_since_inception` is net of fees while `closedPnl` is gross), but cascade-window fees are $43K and $44K.
 
 ## Data provenance
 
@@ -81,9 +119,16 @@ requirements.txt
 |---|---|
 | `vault_pnl_snapshots.csv` | HL API `vault_pnl` endpoint, scope=all and scope=perp |
 | `vault_flows.csv` | HL API `userNonFundingLedgerUpdates` endpoint |
-| `funding.csv` | HL API funding history |
+| `funding.csv` | HL API `userFunding` endpoint |
+| `funding_hourly_20251010.csv` | `misc_events_by_block` Funding events, Oct 10 20:00-22:00 UTC |
+| `snapshot_account_values.csv` | Hydromancer Reservoir account values at blocks 758750000 and 759830000 |
 | `fills/Liquidator*.parquet` | `s3://hl-mainnet-node-data/node_fills_by_block/`, address-filtered |
+| `fills/cascade_L1_L2_20251010_h20_h21.parquet` | `node_fills_by_block` for Oct 10 20:00-22:00 UTC, address-filtered, keeping block order, `startPosition` and the `liquidation` fields |
 | `fills/Strategy_*_daily_aggregate.csv` | Same S3 source, aggregated to per-day closed_pnl sums |
+
+The cascade extract keeps the liquidation method and mark price of each fill, and records only whether the liquidated user is the vault itself, so no third-party address is bundled. It matches the S3-derived `fills/Liquidator*.parquet` files tid for tid over the same hours, and `verify_from_raw.py extract` rebuilds the same table from the raw files.
+
+`funding.csv` comes from HL's `userFunding` endpoint, which returns older funding as one row per coin per UTC day stamped 00:00, with a `nSamples` count of the hourly payments folded in. Windows that start or end inside a day need either the hourly events or a check of when the vault held each coin. Test 15 does the latter.
 
 Re-pull the HL API portion from source with `python scripts/pull_data.py`. The script writes fresh copies of `vault_pnl_snapshots.csv`, `vault_flows.csv`, and `funding.csv` to `data/from_api/` so they can be diffed against the bundled `data/*.csv`. The S3 fills portion requires AWS credentials with requester-pays access and is documented as a manual procedure at the bottom of `pull_data.py`.
 
@@ -98,12 +143,12 @@ diff data/funding.csv              data/from_api/funding.csv
 
 The bundled CSV is filtered to the date windows relevant to the reconciliation; the API pull includes the full history. Inner-joining on `(ts, vault, scope)`, all 82 bundled `vault_pnl` rows tie to the API pull at $0.00 for `account_value` and `pnl_since_inception` and within $0.11 for `flow_cum` (derived as `account_value - pnl_since_inception`).
 
-## The open question
+## The remaining question
 
-For the cascade window Oct 1 → Oct 15 2025, HL's published `pnl_since_inception` for Liquidator and Liquidator 2 is lower than the sum of their fills' `closedPnl` plus funding by $5,689,537 and $5,304,152 respectively. The same identity holds to $1,010 or better in all non-cascade windows tested, including a separate $5.5M Liquidator loss event on Nov 12 2025.
+About $10.89M left the two vaults with no ledger event, immediately after each vault's own liquidation rounds on Oct 10. The removed amount, its timing and the rule behind it are established from public data. The account it went to is not:
 
-The precise form of the observation is that roughly $10.9M of combined equity change for these two vaults has no corresponding event in any externally visible channel: fills, funding, ledger updates, or chain-committed actions. The fills and event archives all share HL's node-data pipeline as their upstream, so whether the mechanism is an unrecorded fill or an unlogged state write cannot be distinguished from outside HL (see "Limits of external verification" in `METHODOLOGY.md`).
+- **Not the auto-deleveraged traders.** Accounts untouched since the cascade hold exactly the cash their fills imply, with no pro-rata share (Test 18).
+- **Not the HLP parent or sibling vaults.** Both reconcile.
+- **Not a ledger recipient.** No address receives a LedgerUpdate of that size in the cascade window (Test 4).
 
-The difference is specifically a cash discrepancy. Both vaults hold only cash at the bracketing snapshots and their position books close to exactly zero across the window, so there is no open inventory for a mark price to act on. That excludes the entire class of valuation explanations and leaves the gap sitting between HL's own vault PnL accounting and the sum of `closedPnl` over the fills HL itself records.
-
-Is there an additional component in HL's `pnl_since_inception` computation that applies specifically to backstop liquidator vaults during cascade events? If so, knowing what it is and where it lives would let this reconcile cleanly.
+When a liquidator vault is liquidated through auto-deleveraging and has positive equity left over, which account is that remainder credited to?
