@@ -56,7 +56,7 @@ The removed balances account for every structural feature of the gap.
 - **Nov 12 reconciles.** Liquidator is liquidated once that day, but the remainder is negative and HL leaves it on the account (Test 16).
 - **No ledger event.** The removal, and the matching credit to the fee recipients, are balance changes without a LedgerUpdate, which is why the destination search (Test 4) and the per-event walk found nothing to attribute it to.
 
-Tests 14 to 18 below verify each step. Test 19 traces the removed balance to its recipients: the Assistance Fund (98.99%) and the HLP parent vault (1.01%), the accounts and proportions that receive protocol fees.
+Tests 14 to 18 below verify each step. Test 19 traces the removed balance to its recipients: the Assistance Fund (98.99%) and the HLP parent vault (1.01%), the accounts and proportions that receive protocol fees. Tests 19b to 21 repeat that measurement on other data: same-block daily snapshots over six days and a second event (19b), the fund's purchases and HL's own running total for it (20), and HL's reported PnL for individual liquidated accounts (21).
 
 ## Per-day decomposition of the cascade window
 
@@ -250,6 +250,21 @@ No external index holds a fill this repo lacks, and every one of the 175,642 sha
 
 Their shortfall is a defect in their ingest, not a signal. Coverage is exact in every hour of the window except 21:00 on Oct 10, where everything from roughly 21:29:07 onward is absent (Liquidator 29,733 fills / $13,876,563.78; Liquidator 2 5,094 fills / $9,135,432.08). The Liquidator 2 figure is identical to the under-report in the same provider's slim CSV export, indicating one shared upstream truncation rather than two separate export bugs. It lands on the 21:22 to 21:59 cleanup phase.
 
+### Test 13b: a third retrieval path covering the whole window
+
+Reproducible via `scripts/crosscheck_hydromancer.py` (requires a `HYDROMANCER_API_KEY`).
+
+Hydromancer keeps a backfill of HL's own fills API. Re-pulling every fill between the Oct 1 and Oct 15 `vault_pnl` snapshots from it has no hole at 21:29, so it also covers the 34,827 fills Test 13 could not compare.
+
+| | Liquidator | Liquidator 2 |
+|---|---|---|
+| In both | 185,741 | 29,341 |
+| Only this repo | 0 | 0 |
+| Only Hydromancer | 0 | 0 |
+| Largest difference in price, size or fee | 0 | 0 |
+| Largest difference in closedPnl | 0 | 9.3e-10 |
+| Hash mismatches | 0 | 0 |
+
 ### Test 14: self-liquidation rounds
 
 Reproducible via `scripts/test_self_liquidation.py`.
@@ -371,6 +386,22 @@ Querying the 2,000 accounts with the largest predicted shares (the script defaul
 
 The 13 untouched accounts would have been owed $578.26 between them under a pro-rata credit, up to $104.17 for a single account. Each holds exactly its fill-implied cash instead. The traders on the other side of the close-out fills were settled at the recorded fill prices and received none of the removed balance. The remaining 1,778 flat accounts have traded or moved funds since and do not bear on the test.
 
+### Test 18b: the largest auto-deleveraged traders
+
+Reproducible via `scripts/test_adl_accounts.py` (public HL info API; the account list comes from `extract_fee_tables.py`).
+
+Test 18 settles the question on accounts whose pro-rata share would have been at most $104. This is the complementary check on the largest traders, where a share would be hundreds of thousands of dollars. Every self-liquidation fill has a trader fill at the same price with zero fee, 18,706 accounts in all for $1,999.3M of notional; the largest 10 hold 46.1% of it.
+
+The check takes HL's `portfolio` PnL samples for an account, picks the nearest samples on each side of the rounds at which the account held no position, and compares the PnL change with `Σ closedPnl − Σ fees + Σ funding` in between. With no position at either end there is no unrealised PnL, so the two are equal unless something moved outside the fills.
+
+| Trader, by close-out notional | Close-out notional | Flat PnL samples (UTC) | HL PnL change | From its own fills | Difference | A pro-rata share would be |
+|---|---|---|---|---|---|---|
+| Largest | | the API no longer serves its Oct 2025 fills | | | | |
+| Second | $231.3M | Oct 8 21:52 to Oct 15 23:12 | $72,333,532 | $72,333,262 | $270 | $936,071 |
+| Third | $111.8M | Oct 1 23:46 to Oct 15 23:46 | $20,243,954 | $20,243,593 | $361 | $452,567 |
+
+The second and third, together 17% of the notional, received no share. The third has a complete history from its first trade and holds nothing now: over its whole life HL's PnL is $17,963,815.74 and its fill-price cash minus fees plus funding is $17,963,815.75.
+
 ### Test 19: recipients of the removed balances
 
 Reproducible via `scripts/trace_destination.py` (about 3.5 GB of requester-pays S3 data). Results in `data/destination_summary.csv`.
@@ -418,6 +449,188 @@ Two caveats:
 - **Calibration window.** The fee shares come from a different window, which is the most likely source of the 0.3% difference.
 - **Snapshot artifacts.** A few accounts show residuals of equal size and opposite sign in the two windows, for example $250,000. Their balances are misstated in the snapshot that both windows share. None of them is a recipient here.
 
+### Test 19b: the same diff between same-block daily snapshots
+
+Reproducible via `scripts/test_account_audit.py` (bundled results, no network) and `scripts/audit_all_accounts.py` (rebuilds them from raw node fills, misc events and Hydromancer Reservoir snapshots).
+
+Test 19 ends its cascade window at the Artemis crawl, which reads each account at its own query time about six hours after the snapshot, and takes the fee shares from one 18-hour window. This test repeats the diff on different end states. Hydromancer Reservoir publishes one clearinghouse snapshot per day with every account at the same block: perp account value and positions, and every spot balance. Six consecutive windows from Oct 7 to Oct 13 give four with no auto-deleveraging, the cascade window (blocks 758750000 to 759830000, 24 hours) and one with a small event. Perp and spot are kept apart:
+
+- **Perp:** change in account value net of position value at the snapshot marks, against fill-price cash − fees + funding + ledger flows.
+- **Spot:** change in USDC balance, against USDC-quoted spot fill cash − USDC fees + ledger flows − reward claims.
+
+**Withdrawals are placed by their nonce.** A withdrawal is debited when requested and logged when the bridge finalises it, usually about four minutes later. Placed by log time, a withdrawal in flight at a snapshot leaves a residual in the window before it and the opposite residual in the window after. 29 withdrawals totalling $397,339 were requested before block 758750000 and logged after it. The largest is $249,999 plus its $1 fee, requested 144 seconds before the snapshot, which fits the $250,000 example among the equal-and-opposite residuals Test 19 lists as snapshot artifacts. On that reading the snapshot is right and the event is late. Placed by nonce, 25 of the 29 accounts fall within $1. The nonce is when the request was signed, and a few withdrawals were signed hours before they were applied, so those keep a residual. The largest residual among ordinary accounts in the cascade window, $50,000, is one of them: a $49,999 withdrawal plus its $1 fee, signed 5.6 hours before the end snapshot and logged 71 minutes after it.
+
+**Nothing left the exchange.** Total USDC owed to accounts (perp account value plus spot USDC, all accounts) against deposits less withdrawals:
+
+| Window (UTC) | Change in total | Deposits − withdrawals | Difference |
+|---|---|---|---|
+| Oct 7 20:12 to Oct 8 20:02 | −$108,509,902 | −$108,289,757 | −$220,146 |
+| Oct 8 20:02 to Oct 9 20:12 | −$13,234,584 | −$13,038,313 | −$196,271 |
+| Oct 9 20:12 to Oct 10 20:04 | −$90,429,598 | −$90,106,214 | −$323,385 |
+| **Oct 10 20:04 to Oct 11 20:09** | −$670,807,586 | −$670,630,310 | **−$177,276** |
+| Oct 11 20:09 to Oct 12 20:11 | −$139,706,062 | −$139,406,003 | −$300,059 |
+| Oct 12 20:11 to Oct 13 20:03 | +$128,406,467 | +$128,735,770 | −$329,302 |
+
+The difference is $0.2M to $0.3M every day, the size of builder and referral rewards that accrue off-balance until claimed. The cascade day is no different. Had the removed cash been destroyed, that day would show about −$12M.
+
+**The cascade window,** 714,808 accounts:
+
+| Account class | Accounts | Perp, unrecorded | Spot USDC, unrecorded |
+|---|---|---|---|
+| Liquidator and Liquidator 2 | 2 | −$10,891,435.88 | $0.00 |
+| Other accounts liquidated through auto-deleveraging | 1,398 | −$1,067,709.96 | −$2.01 |
+| Assistance Fund | 1 | −$7.46 | **+$18,604,327.55** |
+| HLP parent | 1 | **+$187,927.21** | $0.00 |
+| All other accounts | 713,406 | +$73,060.92 | −$2,611.22 |
+
+Of the 713,406 other accounts, 711,858 are within $1 and the largest is $50,000, the late-applied withdrawal above. Unrecorded money left 1,400 accounts and arrived at two.
+
+The vault figures are Test 15's again (−$5,632,778.29 and −$5,258,657.59). Of the 1,398 other accounts, 1,021 lost more than $1, 365 are within $1 and 12 gained more than $1, $3,119 between them. The net is 69.3% of the $1,539,766 their close-out fills received above `markPx`.
+
+**Two accounts receive unrecorded USDC every day.** Net fees are USDC fees less builder fees.
+
+| Window (UTC) | Net fees | Fund inflow | Share | HLP parent inflow | Share | Accounts liquidated through ADL | Removed from them |
+|---|---|---|---|---|---|---|---|
+| Oct 7 20:12 to Oct 8 20:02 | $2,874,720 | $2,778,345 | 0.9665 | $28,065.50 | 0.00976 | 79 | $14,524.83 |
+| Oct 8 20:02 to Oct 9 20:12 | $3,670,364 | $3,532,553 | 0.9625 | $35,684.08 | 0.00972 | 0 | |
+| Oct 9 20:12 to Oct 10 20:04 | $4,463,670 | $4,303,408 | 0.9641 | $43,470.83 | 0.00974 | 0 | |
+| **Oct 10 20:04 to Oct 11 20:09** | $7,028,960 | **$18,604,328** | **2.6468** | **$187,927.21** | **0.02674** | 1,400 | $11,959,145.84 |
+| Oct 11 20:09 to Oct 12 20:11 | $3,273,152 | $3,151,975 | 0.9630 | $31,840.16 | 0.00973 | 0 | |
+| Oct 12 20:11 to Oct 13 20:03 | $3,110,516 | $2,992,623 | 0.9621 | $30,166.69 | 0.00970 | 0 | |
+
+On the four windows with no auto-deleveraging the fund receives 0.9630 of net fees (0.9621 to 0.9641) and the HLP parent 0.009723 (0.009698 to 0.009739). The HLP parent's part of the two is 0.9996%, so what is left after builder fees and referral rewards goes 99% to the Assistance Fund and 1% to HLP.
+
+**On the cascade day both receive more, and the excess is the removed cash, split the same way.**
+
+| | Amount | Share of removed |
+|---|---|---|
+| Removed from the 1,400 accounts liquidated through auto-deleveraging | $11,959,145.84 | |
+| Fund inflow beyond its fee share | $11,835,433.63 | 98.97% |
+| 99% of removed | $11,839,554.38 | |
+| HLP parent inflow beyond its fee share | $119,581.66 | 0.9999% |
+| 1% of removed | $119,591.46 | |
+| The two together | $11,955,015.29 | 99.97% |
+
+The HLP parent's figure is $9.80 from 1% of the removed cash, and the fund's is $4,121 from 99% of it. Using the highest and lowest control-window shares instead of their average moves the fund's excess between $11,827,734 and $11,841,774 and the HLP parent's between $119,474 and $119,758. Both ranges contain the 99% and 1% figures.
+
+**Against Test 19.**
+
+| | Test 19 | This test |
+|---|---|---|
+| Cascade window ends | Artemis crawl, about 01:54 UTC Oct 11, each account at its own query time | block 759830000, 20:09:51 UTC Oct 11, every account |
+| Fee shares from | one 18-hour window | four 24-hour windows |
+| Fund share of net fees | 0.9643 | 0.9630 |
+| HLP parent share of net fees | 0.00962 | 0.00972 |
+| Fund beyond its share | $11,827,162 | $11,835,434 |
+| HLP parent beyond its share | $120,744 | $119,582 |
+| Removed from the two vaults | $10,890,262 | $10,891,436 |
+| Removed from the 1,398 other accounts | $1,094,011 | $1,067,710 |
+| Received less removed | −$36,367 | −$4,131 |
+
+The two agree on the recipients, the split and the size. Most of the difference in closure is the other accounts' figure, $26,301 higher in Test 19. Test 19 sums only the accounts with a negative residual, which is worth $3,119 on this test's data. The remaining $23,182 was not traced; it lies in the different end states. The vault figure differs by $1,174 because Test 19 takes it from the Test 14 walk and this test from the snapshots, which is the −$1,113 and −$61 of Test 15.
+
+The first window contains the only other auto-deleveraging in these six days, 79 accounts at about 04:00 UTC on Oct 8, with $14,524.83 removed. The fund is $9,988 above its share that day (99% would be $14,380) and the HLP parent $113 above (1% would be $145). That is the right direction and size, at the edge of what the control shares can resolve.
+
+**A second event.** The Reservoir archive lists auto-deleveraging fills on 19 dates since July 2025. Oct 10 is by far the largest and Aug 26 2025, the XPL squeeze, is the clear second: 789 accounts liquidated this way, none of them an HLP vault, receiving $2,451,501 above `markPx`. `misc_events_by_block` is not archived before Sep 27 2025, so the full diff cannot run there, but the fund has no ledger events and its inflow needs only spot snapshots and fills (`audit_all_accounts.py --fund-only`):
+
+| Window (UTC) | Net fees | Fund inflow | Share | Accounts liquidated through ADL |
+|---|---|---|---|---|
+| Aug 22 00:11 to Aug 23 00:12 | $6,102,232 | $5,784,316 | 0.9479 | 0 |
+| Aug 23 00:12 to Aug 24 00:00 | $2,590,934 | $2,452,481 | 0.9466 | 0 |
+| Aug 24 00:00 to Aug 25 00:03 | $5,565,653 | $5,279,281 | 0.9485 | 0 |
+| Aug 25 00:03 to Aug 26 00:06 | $5,895,722 | $5,588,994 | 0.9480 | 0 |
+| **Aug 26 00:06 to Aug 27 00:09** | $4,615,311 | **$5,820,414** | **1.2611** | 789 |
+| Aug 27 00:09 to Aug 28 20:05 | $6,492,557 | $6,136,907 | 0.9452 | 0 |
+| Aug 28 20:05 to Aug 29 20:07 | $4,562,571 | $4,331,987 | 0.9495 | 0 |
+
+Over the six windows without auto-deleveraging the fund's share is 0.9476 (0.9452 to 0.9495). In the Aug 26 window its inflow is $1,446,991 above that, 59% of what the liquidated accounts received above `markPx`; on Oct 10 the other accounts lost 69% of theirs.
+
+**What this adds to Test 19.**
+
+- **The same recipients and split from different end states.** Every one of 714,808 accounts is read at the same block, over a full day. The amounts close to 0.03% and the HLP parent's 1% closes to $10.
+- **Nothing was destroyed.** Total USDC owed to accounts tracks deposits and withdrawals on the cascade day as on the days around it.
+- **It is not specific to Oct 10 or to HLP's vaults.** The fund's excess appears again at the Aug 26 event, where no liquidator vault was involved.
+- **Still not observed:** an individual credit. No event records either side, so what is measured is the two accounts' totals over the window, not a transfer per round.
+
+### Test 20: the Assistance Fund's purchases and HL's own tally, Oct 1 to Oct 22
+
+Reproducible via `scripts/test_assistance_fund.py` (bundled data). `scripts/extract_fee_tables.py` rebuilds `assistance_fund_vs_fees_5min.csv` from raw node fills for Oct 1 to Oct 22, and `--pull` refreshes `assistance_fund_pnl_samples.csv` from the HL info API.
+
+Test 19 shows the fund's spending running ahead of its fee income from the first round on, in a window that ends five hours later. This test covers 22 days and adds a measurement that needs no balance snapshot: HL's own running total for the fund.
+
+**What can and cannot be seen.** The Assistance Fund (`0xfefe…fefe`) receives trading fees and spends them buying HYPE on the spot book.
+
+- **Money out is fully visible.** Every purchase is a fill. The fund bids in orders of at most $10,000 and has no other kind of fill in these three weeks.
+- **Money in has no per-credit record.** The fund's ledger for Oct 1 to Oct 22 holds two `spotTransfer` events and nothing else, which is what Test 4 saw. Its account value is almost all HYPE and moves with the price by hundreds of millions.
+- **HL publishes a running total.** The fund's perp account value stays near $1,000 to $2,000 while its `perpAllTime` PnL series climbs by tens of millions a week, so that series is HL's own tally of what has passed through the account. For Oct 2025 the API now serves it as weekly samples.
+- **Historical balances are not served.** The HyperEVM read precompiles (`spotBalance`, `withdrawable`, `accountMarginSummary`) answer at any block tag on the public RPC, but with the current state: a call pinned to an Oct 2025 block returns today's core block number and today's balances.
+
+If the fund's income is only fees, both its purchases and HL's tally should track market-wide fees at a steady share.
+
+**Purchases, day by day.** Net fees are USDC fees less builder fees, which are paid on to the order's builder.
+
+| Span (UTC) | USDC fees | Builder fees | Net fees | Fund purchases | Share of net |
+|---|---|---|---|---|---|
+| Oct 1 to Oct 9, each day | $1.72M to $4.85M | | | | 0.939 to 0.990 |
+| Oct 10 00:00 to 21:15 | $6,166,546 | $379,819 | $5,786,727 | $5,580,454 | 0.964 |
+| **Oct 10 21:15 to 23:20** | $2,646,505 | $137,137 | $2,509,368 | **$14,253,327** | **5.680** |
+| Oct 10 23:20 to 24:00 | $333,961 | $21,399 | $312,562 | $300,874 | 0.963 |
+| Oct 11 to Oct 22, each day | $1.23M to $4.92M | | | | 0.927 to 0.979 |
+
+The share is 0.9631 over the 9.9 days before 21:15 on Oct 10 and 0.9586 over the 12 days after 23:20. The fund buys in batches, so its cumulative purchases run up to $586K behind share × cumulative net fees before catching up. The first self-liquidation round is at 21:16:04. From that 5-minute bin on:
+
+| Up to (UTC) | Cumulative purchases beyond 0.9631 × net fees |
+|---|---|
+| Oct 10 21:15 | $0 |
+| Oct 10 21:20 | $335,783 |
+| Oct 10 21:30 | $1,508,467 |
+| Oct 10 22:00 | $2,596,304 |
+| Oct 10 22:30 | $7,273,118 |
+| Oct 10 23:00 | $9,927,455 |
+| Oct 10 23:20 | $11,836,567 |
+| Oct 11 00:00 | $11,836,414 |
+| Oct 12 00:00 | $11,842,102 |
+| Oct 15 00:00 | $11,846,234 |
+| Oct 23 00:00 | $11,671,999 |
+
+After 23:20 the excess stops growing. It averages $11.82M over the following day and a half and is still $11.67M twelve days later, the slow drift being the slightly lower share after the event. Nothing comparable appears on any other day from Oct 1 to Oct 22.
+
+**HL's own tally, week by week.**
+
+| Sample interval (UTC) | HL tally change | Fund purchases | Net fees | Tally / net fees |
+|---|---|---|---|---|
+| Oct 1 22:36 to Oct 8 23:36 | $20,762,692 | $20,836,454 | $21,590,675 | 0.962 |
+| **Oct 8 23:36 to Oct 15 21:56** | **$39,814,724** | $39,843,126 | $29,066,645 | **1.370** |
+| Oct 15 21:56 to Oct 22 23:56 | $18,740,693 | $18,627,012 | $19,507,571 | 0.961 |
+
+Two things follow. HL's tally matches the fund's purchases within 0.6% in every interval, so the tally is the fund's income and the fund spends what it receives. And in the weeks either side the tally is 0.961 to 0.962 of net fees, while the week containing Oct 10 is $11,876,041 above that ratio. This measurement depends on neither a balance snapshot nor the fund's buying pattern.
+
+**Size.** The fund's 99% of the removed balances is $11.84M (Test 19b). Its excess is $11.82M by its purchases and $11.88M by HL's tally.
+
+### Test 21: other liquidated accounts, through HL's reported PnL
+
+Reproducible via `scripts/test_adl_accounts.py` (public HL info API; the account list comes from `extract_fee_tables.py`).
+
+Tests 19 and 19b find that the 1,398 other accounts liquidated through auto-deleveraging lost balances too, from account balances. This is the same question put to HL's own reported PnL. If the removal applied to them, HL's PnL for them would fall short of their own fills, by no more than what their close-out fills received above `markPx` (the cap, $1,539,766 across the 1,398, part of which only brings an underwater account back to zero). The check is the one in Test 18b, run on the 25 largest of them by close-out notional.
+
+| Account, by close-out notional | Close-out notional | Cap | HL PnL − own fills | Share of cap | Flat PnL samples |
+|---|---|---|---|---|---|
+| 4th | $3,082,218 | $29,248 | −$26,003 | 89% | 2025-10-08 to 2025-10-22 |
+| 7th | $2,553,066 | $24,227 | −$20,887 | 86% | 2025-04-16 to 2026-10-29 |
+| 9th | $1,471,682 | $93,425 | −$75,607 | 81% | 2025-09-24 to 2025-10-15 |
+| 10th | $1,133,417 | $10,755 | −$10,097 | 94% | 2025-07-09 to 2025-10-15 |
+| 13th | $828,541 | $5,873 | −$5,292 | 90% | 2025-10-08 to 2025-10-15 |
+| 14th | $820,306 | $7,784 | −$7,622 | 98% | 2025-10-08 to 2025-10-15 |
+| 15th | $787,045 | $3,243 | −$2,980 | 92% | 2025-08-27 to 2025-10-29 |
+| 18th | $535,706 | $3,797 | −$2,464 | 65% | 2025-09-17 to 2025-11-19 |
+| 24th | $376,867 | $31,770 | −$21,308 | 67% | 2025-10-01 to 2025-10-15 |
+| 25th | $322,501 | $1,000 | −$407 | 41% | 2025-10-08 to 2025-11-05 |
+| **Total** | | **$211,122** | **−$172,667** | **82%** | |
+
+The other 15 cannot be checked this way. For six the public API no longer serves their Oct 2025 fills, for one it serves them with gaps (the script tests that each fill starts where the previous fill on that coin ended), and eight have no PnL sample at which they held no position on both sides of the event.
+
+All ten accounts that can be checked came out short, by 41% to 98% of the cap, where the traders in Test 18b came out even. Where Test 19b measures the same account from the snapshots, the two methods agree within tens of dollars ($26,003 here against $25,998 there, $75,607 against $75,593, $21,308 against $21,296). The ten are the largest the API can still verify, not a random sample: they lost 82% of their cap, against 69% for all 1,398.
+
 ## Limits of external verification
 
 The mechanism is visible in public node data. The self-liquidation fills, their timing and the cash each round leaves behind are all in `node_fills_by_block`. A fill missing from node data cannot be the source of the gap, for two reasons:
@@ -427,7 +640,7 @@ The mechanism is visible in public node data. The self-liquidation fills, their 
 
 Fill completeness holds across the window more broadly as well. Test 13 verifies all 175,642 fills held by a second indexer, with zero mismatches and zero fills unique to that indexer, and Test 10 shows the position book nets to zero across 165 coins, which no lossy fill set would satisfy.
 
-The removal and the matching credit to the fee recipients produce no LedgerUpdate, so neither appears as an event. Both show up only as unexplained balance changes in a full-account diff (Test 19).
+The removal and the matching credit to the fee recipients produce no LedgerUpdate, so neither appears as an event. Both show up only as unexplained balance changes in a full-account diff (Test 19). A second diff between same-block daily snapshots gives the same recipients and amounts, and shows total USDC owed to accounts tracking deposits and withdrawals to within $0.2M on the cascade day, so nothing was destroyed (Test 19b).
 
 The replica_cmds scan (Test 5) and the validator constraints (Test 7) describe how far outside access reaches toward HL's internal state writes.
 
@@ -443,4 +656,4 @@ This repo excludes:
 - HLP parent vault fills (parent is cash-only, doesn't take directional positions; not relevant to the L1/L2 reconciliation).
 - Liquidator 3 and Liquidator 4 fills (these vaults were created post-cascade and have no activity in the relevant window).
 - Dashboard product code, share-of-volume analysis, touch-flow methodology, or any non-reconciliation HLP analysis.
-- Third-party account data. Tests 17, 18 and 19 use other users' fills, ledger events and balances. `verify_from_raw.py` and `trace_destination.py` derive these from raw data at run time and output aggregates without account addresses, apart from the two protocol recipients. No third-party address is bundled, and the cascade extract records only whether a fill's liquidated user is the vault itself.
+- Third-party account data. Tests 17, 18 and 19 use other users' fills, ledger events and balances. `verify_from_raw.py` and `trace_destination.py` derive these from raw data at run time and output aggregates without account addresses, apart from the two protocol recipients. No third-party address is bundled, and the cascade extract records only whether a fill's liquidated user is the vault itself. Tests 18b, 19b and 21 follow the same rule: `extract_fee_tables.py` writes its account lists to the gitignored `data/from_raw/`, `test_adl_accounts.py` prints accounts by rank, and the bundled `account_audit_*.csv` tables are aggregated by account class.

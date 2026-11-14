@@ -1,0 +1,4 @@
+account_type,accounts,transactions,fills,closeout_notional_px,closeout_value_mark_minus_px
+Liquidator,1,12,24769,700176772.02,-8403367.69
+Liquidator 2,1,7,6397,1299111627.31,-6560795.7
+other accounts,1398,104,3856,104058892.55,-1539765.66

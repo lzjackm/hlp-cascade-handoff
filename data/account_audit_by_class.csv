@@ -1,0 +1,31 @@
+window,cls,accounts,perp_unexplained,spot_unexplained
+10-07 20:12 to 10-08 20:02,liquidator vaults,2.0,0.0,0.0
+10-07 20:12 to 10-08 20:02,other ADL-closed accounts,79.0,-14524.83,-2.01
+10-07 20:12 to 10-08 20:02,Assistance Fund,1.0,-2.4,2778344.84
+10-07 20:12 to 10-08 20:02,HLP parent,1.0,28065.5,0.0
+10-07 20:12 to 10-08 20:02,all other accounts,701638.0,7492.92,-1307.47
+10-08 20:02 to 10-09 20:12,liquidator vaults,2.0,-2.08,0.0
+10-08 20:02 to 10-09 20:12,other ADL-closed accounts,0.0,0.0,0.0
+10-08 20:02 to 10-09 20:12,Assistance Fund,1.0,0.59,3532552.96
+10-08 20:02 to 10-09 20:12,HLP parent,1.0,35684.08,0.0
+10-08 20:02 to 10-09 20:12,all other accounts,704857.0,-80109.08,-605.65
+10-09 20:12 to 10-10 20:04,liquidator vaults,2.0,-37.1,0.0
+10-09 20:12 to 10-10 20:04,other ADL-closed accounts,0.0,0.0,0.0
+10-09 20:12 to 10-10 20:04,Assistance Fund,1.0,9.76,4303407.82
+10-09 20:12 to 10-10 20:04,HLP parent,1.0,43470.83,0.0
+10-09 20:12 to 10-10 20:04,all other accounts,707932.0,3046.07,-1200.11
+10-10 20:04 to 10-11 20:09,liquidator vaults,2.0,-10891435.88,0.0
+10-10 20:04 to 10-11 20:09,other ADL-closed accounts,1398.0,-1067709.96,-2.01
+10-10 20:04 to 10-11 20:09,Assistance Fund,1.0,-7.46,18604327.55
+10-10 20:04 to 10-11 20:09,HLP parent,1.0,187927.21,0.0
+10-10 20:04 to 10-11 20:09,all other accounts,713406.0,73060.92,-2611.22
+10-11 20:09 to 10-12 20:11,liquidator vaults,2.0,0.56,0.0
+10-11 20:09 to 10-12 20:11,other ADL-closed accounts,0.0,0.0,0.0
+10-11 20:09 to 10-12 20:11,Assistance Fund,1.0,2.45,3151975.17
+10-11 20:09 to 10-12 20:11,HLP parent,1.0,31840.16,0.0
+10-11 20:09 to 10-12 20:11,all other accounts,714117.0,-42172.57,-1589.98
+10-12 20:11 to 10-13 20:03,liquidator vaults,2.0,-0.15,0.0
+10-12 20:11 to 10-13 20:03,other ADL-closed accounts,0.0,0.0,0.0
+10-12 20:11 to 10-13 20:03,Assistance Fund,1.0,993.66,2992623.22
+10-12 20:11 to 10-13 20:03,HLP parent,1.0,30166.69,0.0
+10-12 20:11 to 10-13 20:03,all other accounts,717083.0,-69685.3,-1308.31
